@@ -1,0 +1,60 @@
+format_version: "11"
+default_step_lib_source: "https://github.com/bitrise-io/bitrise-steplib.git"
+
+app:
+  envs:
+    - PROJECT_PATH: "Project-17-12-25-1.xcodeproj"
+    - SCHEME: "Project-17-12-25-1"
+    - EXPORT_METHOD: "app-store"
+    - BUNDLE_ID: "com.mnemoriaIG.jonesJ"
+    - TEAM_ID: "F87B8NUZG6"
+    - PROFILE_UUID: "9b9ed8ad-8c6e-4933-affd-7adc72ed9712"
+
+workflows:
+  archive_and_export_app:
+    steps:
+      # (опц) проверим, что секреты ASC заданы
+      - script@1:
+          title: "Preflight: check ASC API key secrets"
+          inputs:
+            - content: |-
+                set -e
+                for v in APP_STORE_CONNECT_ISSUER_ID APP_STORE_CONNECT_KEY_IDENTIFIER APP_STORE_CONNECT_PRIVATE_KEY; do
+                  if [ -z "${!v:-}" ]; then echo "❌ Missing secret: $v"; exit 1; fi
+                done
+                echo "$APP_STORE_CONNECT_PRIVATE_KEY" | grep -q "BEGIN PRIVATE KEY" || { echo "❌ APP_STORE_CONNECT_PRIVATE_KEY must be full .p8 content"; exit 1; }
+                echo "✅ ASC API key secrets OK"
+      - git-clone@8: {}
+
+      - certificate-and-profile-installer@1: {}
+
+      - xcode-archive@5:
+          inputs:
+            - project_path: "$PROJECT_PATH"
+            - scheme: "$SCHEME"
+            - configuration: "Release"
+            - distribution_method: "$EXPORT_METHOD"
+            - automatic_code_signing: "off"
+            - compile_bitcode: "false"
+            - upload_bitcode: "false"
+            - xcodebuild_options: >-
+                -destination 'generic/platform=iOS'
+                DEVELOPMENT_TEAM=$TEAM_ID
+                CODE_SIGN_STYLE=Manual
+                CODE_SIGN_IDENTITY="Apple Distribution"
+                PROVISIONING_PROFILE_SPECIFIER=$PROFILE_UUID
+            - log_formatter: "xcpretty"
+
+      # ⬇️ Загрузка IPA в TestFlight через официальный шаг Upload (без deliver)
+      - app-store-connect-upload@1:
+          inputs:
+            - issuer_id: "$APP_STORE_CONNECT_ISSUER_ID"
+            - key_id: "$APP_STORE_CONNECT_KEY_IDENTIFIER"
+            - private_key: "$APP_STORE_CONNECT_PRIVATE_KEY"   # ПОЛНОЕ содержимое .p8
+            - submit_to_testflight: "yes"
+            - skip_wait_for_build_processing: "yes"
+            - verbose_log: "yes"
+            # (опц.) если хочешь явно указать bundle_id:
+            # - bundle_id: "$BUNDLE_ID"
+
+      - deploy-to-bitrise-io@2: {} 
